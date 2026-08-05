@@ -402,13 +402,18 @@ impl<'source> PreparedComponent<'source> {
         crate::compiler::phases::phase3_transform::profile::record_pipeline_transform(
             crate::compiler::phases::phase3_transform::profile::timer_elapsed(_transform_start),
         );
-        Ok(crate::compiler::finalize_compile_result(
+        let _finalize_start = crate::compiler::phases::phase3_transform::profile::timer_start();
+        let finalized = crate::compiler::finalize_compile_result(
             transform_result,
             &self.analysis,
             self.source,
             options,
             self.runes_mode,
-        ))
+        );
+        crate::compiler::phases::phase3_transform::profile::record_pipeline_finalize(
+            crate::compiler::phases::phase3_transform::profile::timer_elapsed(_finalize_start),
+        );
+        Ok(finalized)
     }
 }
 

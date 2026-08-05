@@ -62,7 +62,7 @@ use std::time::Duration;
 // shim that returns a unit "instant" with a zero-cost elapsed so the
 // instrumented sites stay compile-target-portable without #[cfg] noise.
 
-/// Whether the phase timers read the clock. See the module note for the 0.196%
+/// Whether the phase timers read the clock. See the module note for the 0.198%
 /// that makes this a gate rather than an unconditional cost.
 ///
 /// Relaxed is enough: nothing is published through this flag, and a profiling
@@ -290,6 +290,8 @@ pub struct PipelineBreakdown {
     pub parse: Duration,
     /// The one full-source scan that produces line offsets.
     pub line_offsets: Duration,
+    /// Parsing the template expressions phase 1 deferred.
+    pub resolve_lazy: Duration,
     /// OXC over the instance and module scripts, retaining the programs.
     pub ensure_script: Duration,
     /// TypeScript node removal. Absent from every older profiler.
@@ -300,6 +302,8 @@ pub struct PipelineBreakdown {
     pub analyze: Duration,
     /// Phase 3, whose sub-split is [`Phase3Breakdown`].
     pub transform: Duration,
+    /// Assembling the `CompileResult` once Phase 3 has produced its output.
+    pub finalize: Duration,
     /// The entire compile, measured independently of the buckets above.
     pub total: Duration,
     /// Compiles that reached the pipeline, for per-file figures.
@@ -312,11 +316,13 @@ impl PipelineBreakdown {
         self.total.saturating_sub(
             self.parse
                 + self.line_offsets
+                + self.resolve_lazy
                 + self.ensure_script
                 + self.ts_removal
                 + self.options_merge
                 + self.analyze
-                + self.transform,
+                + self.transform
+                + self.finalize,
         )
     }
 }
@@ -324,11 +330,13 @@ impl PipelineBreakdown {
 thread_local! {
     static PL_PARSE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
     static PL_LINE_OFFSETS: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static PL_RESOLVE_LAZY: Cell<Duration> = const { Cell::new(Duration::ZERO) };
     static PL_ENSURE_SCRIPT: Cell<Duration> = const { Cell::new(Duration::ZERO) };
     static PL_TS_REMOVAL: Cell<Duration> = const { Cell::new(Duration::ZERO) };
     static PL_OPTIONS_MERGE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
     static PL_ANALYZE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
     static PL_TRANSFORM: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static PL_FINALIZE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
     static PL_TOTAL: Cell<Duration> = const { Cell::new(Duration::ZERO) };
     static PL_COMPILES: Cell<u64> = const { Cell::new(0) };
 
@@ -798,6 +806,14 @@ pub fn record_pipeline_line_offsets(d: Duration) {
 }
 
 #[inline]
+pub fn record_pipeline_resolve_lazy(d: Duration) {
+    if !timers_enabled() {
+        return;
+    }
+    PL_RESOLVE_LAZY.with(|c| c.set(c.get() + d));
+}
+
+#[inline]
 pub fn record_pipeline_ensure_script(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
@@ -850,6 +866,14 @@ pub fn record_pipeline_transform(d: Duration) {
 /// One compile, timed end to end. Separate from the buckets on purpose: the
 /// two are compared, not derived from each other.
 #[inline]
+pub fn record_pipeline_finalize(d: Duration) {
+    if !timers_enabled() {
+        return;
+    }
+    PL_FINALIZE.with(|c| c.set(c.get() + d));
+}
+
+#[inline]
 pub fn record_pipeline_total(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
@@ -864,11 +888,13 @@ pub fn take_pipeline_breakdown() -> PipelineBreakdown {
     PipelineBreakdown {
         parse: PL_PARSE.with(|c| c.replace(Duration::ZERO)),
         line_offsets: PL_LINE_OFFSETS.with(|c| c.replace(Duration::ZERO)),
+        resolve_lazy: PL_RESOLVE_LAZY.with(|c| c.replace(Duration::ZERO)),
         ensure_script: PL_ENSURE_SCRIPT.with(|c| c.replace(Duration::ZERO)),
         ts_removal: PL_TS_REMOVAL.with(|c| c.replace(Duration::ZERO)),
         options_merge: PL_OPTIONS_MERGE.with(|c| c.replace(Duration::ZERO)),
         analyze: PL_ANALYZE.with(|c| c.replace(Duration::ZERO)),
         transform: PL_TRANSFORM.with(|c| c.replace(Duration::ZERO)),
+        finalize: PL_FINALIZE.with(|c| c.replace(Duration::ZERO)),
         total: PL_TOTAL.with(|c| c.replace(Duration::ZERO)),
         compiles: PL_COMPILES.with(|c| c.replace(0)),
     }

@@ -163,7 +163,9 @@ fn main() {
     for (name, d) in [
         ("parse", b.parse),
         ("line_offsets", b.line_offsets),
+        ("resolve_lazy", b.resolve_lazy),
         ("ensure_script", b.ensure_script),
+        ("finalize", b.finalize),
         ("ts_removal", b.ts_removal),
         ("options_merge", b.options_merge),
         ("analyze", b.analyze),

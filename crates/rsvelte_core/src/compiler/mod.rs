@@ -554,13 +554,14 @@ pub(crate) fn prepare_and_analyze<'source>(
 
     // Resolve lazy expressions (deferred template expressions). If any
     // expression has a parse error, return it immediately.
-    if let Some(parse_err) =
-        phases::phase1_parse::resolve_lazy::resolve_lazy_expressions_with_line_offsets(
-            ast,
-            source,
-            &line_offsets,
-        )
-    {
+    let _lazy_start = profile::timer_start();
+    let lazy_err = phases::phase1_parse::resolve_lazy::resolve_lazy_expressions_with_line_offsets(
+        ast,
+        source,
+        &line_offsets,
+    );
+    profile::record_pipeline_resolve_lazy(profile::timer_elapsed(_lazy_start));
+    if let Some(parse_err) = lazy_err {
         return Err(parse_err.into());
     }
 
