@@ -181,7 +181,68 @@ pub struct ReparseBreakdown {
     pub direct_bytes: u64,
 }
 
+/// The whole of `compile()`, split at the boundaries the production pipeline
+/// actually has.
+///
+/// Recorded from inside the pipeline rather than by a driver that calls the
+/// phase functions itself. A driver has to thread the retained scripts, call
+/// every step, pick the same implementation, and pass the same argument
+/// values — four things it can get wrong, and the older profilers got all four
+/// wrong at once. Timing the production call sites removes the notion of
+/// "calling it correctly": whatever `compile()` does is what is measured.
+///
+/// `total` is taken around the entire compile, so `total - Σ(buckets)` is time
+/// no bucket claims. Report that residual. A bucket nobody added shows up
+/// there instead of inflating the shares of the buckets that do exist, which
+/// is how TypeScript removal stayed missing from the older split unnoticed.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct PipelineBreakdown {
+    /// Template parse, deferred script split included.
+    pub parse: Duration,
+    /// The one full-source scan that produces line offsets.
+    pub line_offsets: Duration,
+    /// OXC over the instance and module scripts, retaining the programs.
+    pub ensure_script: Duration,
+    /// TypeScript node removal. Absent from every older profiler.
+    pub ts_removal: Duration,
+    /// Merging `<svelte:options>` into the compile options.
+    pub options_merge: Duration,
+    /// Phase 2. Its own sub-split is not covered here.
+    pub analyze: Duration,
+    /// Phase 3, whose sub-split is [`Phase3Breakdown`].
+    pub transform: Duration,
+    /// The entire compile, measured independently of the buckets above.
+    pub total: Duration,
+    /// Compiles that reached the pipeline, for per-file figures.
+    pub compiles: u64,
+}
+
+impl PipelineBreakdown {
+    /// Time inside `total` that no bucket claims. A missing bucket lands here.
+    pub fn unattributed(&self) -> Duration {
+        self.total.saturating_sub(
+            self.parse
+                + self.line_offsets
+                + self.ensure_script
+                + self.ts_removal
+                + self.options_merge
+                + self.analyze
+                + self.transform,
+        )
+    }
+}
+
 thread_local! {
+    static PL_PARSE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static PL_LINE_OFFSETS: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static PL_ENSURE_SCRIPT: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static PL_TS_REMOVAL: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static PL_OPTIONS_MERGE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static PL_ANALYZE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static PL_TRANSFORM: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static PL_TOTAL: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static PL_COMPILES: Cell<u64> = const { Cell::new(0) };
+
     static REPARSE: Cell<(Duration, Duration, u64, u64)> =
         const { Cell::new((Duration::ZERO, Duration::ZERO, 0, 0)) };
     static REPARSE_DIRECT: Cell<(Duration, u64, u64)> =
@@ -494,6 +555,63 @@ pub fn take_script_text_breakdown() -> ScriptTextBreakdown {
         parent_site_pub: ST_PARENT_SITE_PUB.with(|c| c.replace(0)),
         in_function: ST_IN_FUNCTION.with(|c| c.replace(Duration::ZERO)),
         entries_outside_parent: ST_ENTRIES_OUTSIDE.with(|c| c.replace(0)),
+    }
+}
+
+#[inline]
+pub fn record_pipeline_parse(d: Duration) {
+    PL_PARSE.with(|c| c.set(c.get() + d));
+}
+
+#[inline]
+pub fn record_pipeline_line_offsets(d: Duration) {
+    PL_LINE_OFFSETS.with(|c| c.set(c.get() + d));
+}
+
+#[inline]
+pub fn record_pipeline_ensure_script(d: Duration) {
+    PL_ENSURE_SCRIPT.with(|c| c.set(c.get() + d));
+}
+
+#[inline]
+pub fn record_pipeline_ts_removal(d: Duration) {
+    PL_TS_REMOVAL.with(|c| c.set(c.get() + d));
+}
+
+#[inline]
+pub fn record_pipeline_options_merge(d: Duration) {
+    PL_OPTIONS_MERGE.with(|c| c.set(c.get() + d));
+}
+
+#[inline]
+pub fn record_pipeline_analyze(d: Duration) {
+    PL_ANALYZE.with(|c| c.set(c.get() + d));
+}
+
+#[inline]
+pub fn record_pipeline_transform(d: Duration) {
+    PL_TRANSFORM.with(|c| c.set(c.get() + d));
+}
+
+/// One compile, timed end to end. Separate from the buckets on purpose: the
+/// two are compared, not derived from each other.
+#[inline]
+pub fn record_pipeline_total(d: Duration) {
+    PL_TOTAL.with(|c| c.set(c.get() + d));
+    PL_COMPILES.with(|c| c.set(c.get() + 1));
+}
+
+pub fn take_pipeline_breakdown() -> PipelineBreakdown {
+    PipelineBreakdown {
+        parse: PL_PARSE.with(|c| c.replace(Duration::ZERO)),
+        line_offsets: PL_LINE_OFFSETS.with(|c| c.replace(Duration::ZERO)),
+        ensure_script: PL_ENSURE_SCRIPT.with(|c| c.replace(Duration::ZERO)),
+        ts_removal: PL_TS_REMOVAL.with(|c| c.replace(Duration::ZERO)),
+        options_merge: PL_OPTIONS_MERGE.with(|c| c.replace(Duration::ZERO)),
+        analyze: PL_ANALYZE.with(|c| c.replace(Duration::ZERO)),
+        transform: PL_TRANSFORM.with(|c| c.replace(Duration::ZERO)),
+        total: PL_TOTAL.with(|c| c.replace(Duration::ZERO)),
+        compiles: PL_COMPILES.with(|c| c.replace(0)),
     }
 }
 

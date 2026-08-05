@@ -519,7 +519,12 @@ pub(crate) fn parse_component(source: &str) -> Result<crate::ast::Root<'_>, Comp
     };
     // M5-A: caller-owned arena, unused for now (Root borrows only `source`).
     let alloc = oxc_allocator::Allocator::default();
-    Ok(phases::phase1_parse::parse(source, &alloc, parse_options)?)
+    let _parse_start = phases::phase3_transform::profile::timer_start();
+    let parsed = phases::phase1_parse::parse(source, &alloc, parse_options)?;
+    phases::phase3_transform::profile::record_pipeline_parse(
+        phases::phase3_transform::profile::timer_elapsed(_parse_start),
+    );
+    Ok(parsed)
 }
 
 /// Front-half shared by [`compile`] and [`compile_both`], run under the caller's
@@ -541,7 +546,11 @@ pub(crate) fn prepare_and_analyze<'source>(
     ),
     CompileError,
 > {
+    use phases::phase3_transform::profile;
+
+    let _offsets_start = profile::timer_start();
     let line_offsets = phases::phase1_parse::compute_line_offsets(source, ast.skip_expression_loc);
+    profile::record_pipeline_line_offsets(profile::timer_elapsed(_offsets_start));
 
     // Resolve lazy expressions (deferred template expressions). If any
     // expression has a parse error, return it immediately.
@@ -560,6 +569,7 @@ pub(crate) fn prepare_and_analyze<'source>(
     // parse it first so remove_typescript_nodes can inspect the AST.
     let mut retained_scripts = crate::ast::oxc_program::RetainedScripts::default();
     {
+        let _scripts_start = profile::timer_start();
         if let Some(ref mut instance) = ast.instance {
             let (parse_error, retained) =
                 phases::phase1_parse::read::script::ensure_script_parsed_retained(
@@ -584,14 +594,18 @@ pub(crate) fn prepare_and_analyze<'source>(
             }
             retained_scripts.module = retained;
         }
+        profile::record_pipeline_ensure_script(profile::timer_elapsed(_scripts_start));
     }
 
     // Remove TypeScript nodes from script content if TypeScript is detected.
+    let _ts_start = profile::timer_start();
     remove_typescript_from_ast(ast)?;
+    profile::record_pipeline_ts_removal(profile::timer_elapsed(_ts_start));
 
     // Merge parsed <svelte:options> into compile options.
     // Reference: svelte/packages/svelte/src/compiler/index.js
     //   const combined_options = { ...validated, ...parsed_options, customElementOptions };
+    let _options_start = profile::timer_start();
     if let Some(ref parsed_options) = ast.options {
         if let Some(pw) = parsed_options.preserve_whitespace {
             options.preserve_whitespace = pw;
@@ -601,14 +615,17 @@ pub(crate) fn prepare_and_analyze<'source>(
             options.css = CssMode::Injected;
         }
     }
+    profile::record_pipeline_options_merge(profile::timer_elapsed(_options_start));
 
     // Phase 2: Analyze
+    let _analyze_start = profile::timer_start();
     let analysis = phases::phase2_analyze::analyze_prepared_component_with_retained(
         ast,
         source,
         &options,
         Some(&retained_scripts),
     )?;
+    profile::record_pipeline_analyze(profile::timer_elapsed(_analyze_start));
     // Determine if runes mode was used
     let runes_mode = options.runes.unwrap_or(analysis.runes);
     Ok((options, analysis, runes_mode, retained_scripts))
@@ -633,7 +650,12 @@ pub(crate) fn prepare_and_analyze<'source>(
 /// Returns a `CompileResult` containing the generated JavaScript and CSS.
 pub fn compile(source: &str, options: CompileOptions) -> Result<CompileResult, CompileError> {
     let generate = options.generate;
-    crate::toolchain::PreparedComponent::new(source, options)?.compile_mode(generate)
+    let _total_start = phases::phase3_transform::profile::timer_start();
+    let result = crate::toolchain::PreparedComponent::new(source, options)?.compile_mode(generate);
+    phases::phase3_transform::profile::record_pipeline_total(
+        phases::phase3_transform::profile::timer_elapsed(_total_start),
+    );
+    result
 }
 
 #[doc(hidden)]
@@ -642,8 +664,13 @@ pub fn compile_with_external_sourcemap_content(
     options: CompileOptions,
 ) -> Result<CompileResult, CompileError> {
     let generate = options.generate;
-    crate::toolchain::PreparedComponent::new(source, options)?
-        .compile_mode_with_sourcemap_content(generate, false)
+    let _total_start = phases::phase3_transform::profile::timer_start();
+    let result = crate::toolchain::PreparedComponent::new(source, options)?
+        .compile_mode_with_sourcemap_content(generate, false);
+    phases::phase3_transform::profile::record_pipeline_total(
+        phases::phase3_transform::profile::timer_elapsed(_total_start),
+    );
+    result
 }
 
 /// Compile a single component to **both** client (CSR) and server (SSR) output in

@@ -389,6 +389,7 @@ impl<'source> PreparedComponent<'source> {
         });
         let options = adjusted_options.as_ref().unwrap_or(&self.options);
         let include_sourcemap_content = include_sourcemap_content || options.sourcemap.is_some();
+        let _transform_start = crate::compiler::phases::phase3_transform::profile::timer_start();
         let transform_result = transform_component_with_scripts(
             &self.analysis,
             &self.ast,
@@ -398,6 +399,9 @@ impl<'source> PreparedComponent<'source> {
             Some(&self.retained_scripts),
         )
         .map_err(CompileError::from)?;
+        crate::compiler::phases::phase3_transform::profile::record_pipeline_transform(
+            crate::compiler::phases::phase3_transform::profile::timer_elapsed(_transform_start),
+        );
         Ok(crate::compiler::finalize_compile_result(
             transform_result,
             &self.analysis,
