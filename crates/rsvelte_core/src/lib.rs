@@ -28,6 +28,8 @@
 pub mod ast;
 pub mod compiler;
 pub mod error;
+#[cfg(feature = "measure-ast-state")]
+pub mod measure_ast_state;
 #[cfg(feature = "measure-await")]
 pub mod measure_await;
 #[cfg(feature = "measure-hoisted")]

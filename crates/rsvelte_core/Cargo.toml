@@ -27,6 +27,10 @@ crate-type = ["rlib"]
 default = []
 parallel = ["dep:rayon"]
 trace-fastpath = []
+# Repository-local instrumentation: count how often the runes state transform
+# reuses the retained instance-script program instead of parsing it again.
+# Off by default.
+measure-ast-state = []
 # Repository-local instrumentation: replay the pre-refactor `await` scanner so
 # the `String` allocations it performed can be counted. Off by default.
 measure-await = []
