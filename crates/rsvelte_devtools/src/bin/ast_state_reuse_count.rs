@@ -56,6 +56,7 @@ fn main() {
         "root", "files", "reused", "reparsed", "reuse %"
     );
     let (mut all_uses, mut all_reparses, mut all_files) = (0u64, 0u64, 0usize);
+    let mut all_bails = [0u64; measure_ast_state::Bail::ALL.len()];
     for root in &roots {
         let mut files = Vec::new();
         collect(root, &mut files);
@@ -98,6 +99,11 @@ fn main() {
         all_uses += uses;
         all_reparses += reparses;
         all_files += files.len();
+        // `reset` clears the bail counters too, so they have to be drained here
+        // rather than read once at the end.
+        for (slot, reason) in all_bails.iter_mut().zip(measure_ast_state::Bail::ALL) {
+            *slot += reason.count();
+        }
     }
 
     let total = all_uses + all_reparses;
@@ -112,5 +118,19 @@ fn main() {
     // A zero denominator would make the ratio unreadable rather than perfect.
     if total == 0 {
         println!("nothing reached the site — the ratio above says nothing");
+        return;
     }
+
+    println!("\nwhy the retained program was not used:");
+    for (count, reason) in all_bails.iter().zip(measure_ast_state::Bail::ALL) {
+        println!("  {:<18} {count:>9}", reason.label());
+    }
+    // The reasons partition the re-parses only if every exit is instrumented.
+    // Printing both totals makes a missed exit visible instead of letting it be
+    // absorbed into whichever bucket happens to be largest.
+    println!(
+        "  {:<18} {:>9}   (re-parses {all_reparses})",
+        "sum",
+        all_bails.iter().sum::<u64>()
+    );
 }

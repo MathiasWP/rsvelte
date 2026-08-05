@@ -16,6 +16,59 @@ use std::cell::Cell;
 thread_local! {
     static RETAINED_USES: Cell<u64> = const { Cell::new(0) };
     static REPARSES: Cell<u64> = const { Cell::new(0) };
+    static BAILS: [Cell<u64>; Bail::COUNT] = const { [const { Cell::new(0) }; Bail::COUNT] };
+}
+
+/// Where the decision to re-parse was taken. The five sites call for different
+/// repairs — one is a wiring gap, one is an earlier text pass having rewritten
+/// the script, and three are the retained source failing to locate the current
+/// text — so a single "re-parsed" total cannot say which one to attack.
+#[derive(Clone, Copy)]
+pub enum Bail {
+    /// No retained program reached the transform at all.
+    NotRetained,
+    /// The retained script and the pipeline's current text no longer agree.
+    CoreMismatch,
+    /// The projected transform rejected the retained program.
+    ProjectionFailed,
+    /// The retained source does not contain the current script text.
+    RangeNotFound,
+    /// The retained source contains it more than once, so the range is ambiguous.
+    RangeAmbiguous,
+}
+
+impl Bail {
+    const COUNT: usize = 5;
+
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::NotRetained,
+        Self::CoreMismatch,
+        Self::ProjectionFailed,
+        Self::RangeNotFound,
+        Self::RangeAmbiguous,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NotRetained => "not retained",
+            Self::CoreMismatch => "core mismatch",
+            Self::ProjectionFailed => "projection failed",
+            Self::RangeNotFound => "range not found",
+            Self::RangeAmbiguous => "range ambiguous",
+        }
+    }
+
+    pub fn count(self) -> u64 {
+        BAILS.with(|counts| counts[self as usize].get())
+    }
+}
+
+/// The retained program could not be used, for `reason`.
+pub fn record_bail(reason: Bail) {
+    BAILS.with(|counts| {
+        let count = &counts[reason as usize];
+        count.set(count.get() + 1);
+    });
 }
 
 /// The retained program was usable: the state transform read it in place.
@@ -37,4 +90,9 @@ pub fn snapshot() -> (u64, u64) {
 pub fn reset() {
     RETAINED_USES.with(|c| c.set(0));
     REPARSES.with(|c| c.set(0));
+    BAILS.with(|counts| {
+        for count in counts {
+            count.set(0);
+        }
+    });
 }

@@ -6153,10 +6153,18 @@ fn transform_instance_script_for_visitors(
                 exported_names: &exported_names,
             };
             let mut used_retained = false;
+            #[cfg(feature = "measure-ast-state")]
+            if retained_program.is_none() {
+                crate::measure_ast_state::record_bail(crate::measure_ast_state::Bail::NotRetained);
+            }
             let ast_result = retained_program.and_then(|program| {
                 let retained_core = original_script.trim();
                 let result_core = result.trim();
                 if retained_core != result_core {
+                    #[cfg(feature = "measure-ast-state")]
+                    crate::measure_ast_state::record_bail(
+                        crate::measure_ast_state::Bail::CoreMismatch,
+                    );
                     return None;
                 }
                 let result_core_start = result.find(result_core).unwrap_or(0);
@@ -6184,13 +6192,27 @@ fn transform_instance_script_for_visitors(
                         }
                         Err(()) => {
                             counters.restore();
+                            #[cfg(feature = "measure-ast-state")]
+                            crate::measure_ast_state::record_bail(
+                                crate::measure_ast_state::Bail::ProjectionFailed,
+                            );
                             return None;
                         }
                     }
                 } else {
                     let mut retained_matches = program.source().match_indices(retained_core);
-                    let (retained_core_start, _) = retained_matches.next()?;
+                    let Some((retained_core_start, _)) = retained_matches.next() else {
+                        #[cfg(feature = "measure-ast-state")]
+                        crate::measure_ast_state::record_bail(
+                            crate::measure_ast_state::Bail::RangeNotFound,
+                        );
+                        return None;
+                    };
                     if retained_matches.next().is_some() {
+                        #[cfg(feature = "measure-ast-state")]
+                        crate::measure_ast_state::record_bail(
+                            crate::measure_ast_state::Bail::RangeAmbiguous,
+                        );
                         return None;
                     }
                     let retained_core_end = retained_core_start + retained_core.len();
