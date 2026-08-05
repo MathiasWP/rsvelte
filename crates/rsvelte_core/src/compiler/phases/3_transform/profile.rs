@@ -11,15 +11,21 @@
 //! one clock read                      18.7 ns
 //! recorder (thread-local + Cell)       6.7 ns
 //! one timer pair                      44.2 ns   (three recorder shapes agree to 0.3%)
+//! gate load and branch                 0.33 ns  (measured below)
+//! one gated pair                      44.5 ns
 //! pairs per compile                  101.8      legacy corpus, 633 files
-//! per compile                          4.5 µs = 0.196% of a 2292 µs compile
+//! per compile                          4.5 µs = 0.198% of a 2292 µs compile
 //! ```
+//!
+//! The gated figure is the sum of two measurements rather than a third one. Both
+//! terms are measured, and adding them cannot pick up the layout difference or
+//! the machine load that a fresh whole-run comparison would.
 //!
 //! An earlier version of this note claimed ~100–200ns per file. That was off by
 //! a factor of ~25, because it counted a handful of sites rather than the 101.8
 //! pairs a compile actually reaches. The rune corpus pays 24.8 pairs, or 0.117%.
 //!
-//! 0.196% is above the cut we set for shipping timers unconditionally, so
+//! 0.198% is above the cut we set for shipping timers unconditionally, so
 //! [`set_timers_enabled`] gates them and they start off. The gate is a relaxed
 //! atomic load, so both states stay in one binary and the profiled build is the
 //! shipped build.
@@ -78,13 +84,13 @@ pub fn timers_enabled() -> bool {
     TIMERS_ENABLED.load(Ordering::Relaxed)
 }
 
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "measure-no-timers")))]
+#[cfg(not(target_arch = "wasm32"))]
 pub type TimerStart = Option<std::time::Instant>;
 
-#[cfg(any(target_arch = "wasm32", feature = "measure-no-timers"))]
+#[cfg(target_arch = "wasm32")]
 pub type TimerStart = ();
 
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "measure-no-timers")))]
+#[cfg(not(target_arch = "wasm32"))]
 #[inline]
 pub fn timer_start() -> TimerStart {
     if !timers_enabled() {
@@ -95,11 +101,11 @@ pub fn timer_start() -> TimerStart {
     Some(std::time::Instant::now())
 }
 
-#[cfg(any(target_arch = "wasm32", feature = "measure-no-timers"))]
+#[cfg(target_arch = "wasm32")]
 #[inline]
 pub fn timer_start() -> TimerStart {}
 
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "measure-no-timers")))]
+#[cfg(not(target_arch = "wasm32"))]
 #[inline]
 pub fn timer_elapsed(start: TimerStart) -> Duration {
     // `None` means the gate was off when the timer started. Returning the
@@ -108,20 +114,20 @@ pub fn timer_elapsed(start: TimerStart) -> Duration {
     start.map_or(Duration::ZERO, |start| start.elapsed())
 }
 
-#[cfg(any(target_arch = "wasm32", feature = "measure-no-timers"))]
+#[cfg(target_arch = "wasm32")]
 #[inline]
 pub fn timer_elapsed(_start: TimerStart) -> Duration {
     Duration::ZERO
 }
 
-/// How many `Instant` pairs one compile pays for.
-///
-/// The unit is deliberately `timer_start`, not `record_*`: the recorders take
-/// between zero and two `Duration`s, so counting them would mix sites that read
-/// the clock twice with sites that never read it. Every `timer_start` is one
-/// `now()` plus the `elapsed()` that consumes it, so dividing the measured
-/// instrumentation cost by this count gives a per-pair figure without assuming
-/// the sites are alike.
+// How many `Instant` pairs one compile pays for.
+//
+// The unit is deliberately `timer_start`, not `record_*`: the recorders take
+// between zero and two `Duration`s, so counting them would mix sites that read
+// the clock twice with sites that never read it. Every `timer_start` is one
+// `now()` plus the `elapsed()` that consumes it, so dividing the measured
+// instrumentation cost by this count gives a per-pair figure without assuming
+// the sites are alike.
 #[cfg(feature = "measure-timer-calls")]
 thread_local! {
     static TIMER_STARTS: Cell<u64> = const { Cell::new(0) };
@@ -372,7 +378,7 @@ thread_local! {
 pub fn record_reparse(parse: Duration, visit: Duration, bytes: usize) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     REPARSE.with(|c| {
@@ -385,7 +391,7 @@ pub fn record_reparse(parse: Duration, visit: Duration, bytes: usize) {
 pub fn record_direct_parse(parse: Duration, bytes: usize) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     REPARSE_DIRECT.with(|c| {
@@ -412,7 +418,7 @@ pub fn take_reparse_breakdown() -> ReparseBreakdown {
 pub fn record_esrap_client_split(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ESRAP_CLIENT_SPLIT.with(|c| {
@@ -425,7 +431,7 @@ pub fn record_esrap_client_split(d: Duration) {
 pub fn record_esrap_client_map(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ESRAP_CLIENT_MAP.with(|c| {
@@ -438,7 +444,7 @@ pub fn record_esrap_client_map(d: Duration) {
 pub fn record_esrap_client_plain(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ESRAP_CLIENT_PLAIN.with(|c| {
@@ -451,7 +457,7 @@ pub fn record_esrap_client_plain(d: Duration) {
 pub fn record_esrap_server(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ESRAP_SERVER.with(|c| {
@@ -464,7 +470,7 @@ pub fn record_esrap_server(d: Duration) {
 pub fn record_esrap_pipe(print: Duration, reparse: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ESRAP_PIPE.with(|c| {
@@ -477,7 +483,7 @@ pub fn record_esrap_pipe(print: Duration, reparse: Duration) {
 pub fn record_esrap_normalize(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ESRAP_NORMALIZE.with(|c| {
@@ -518,7 +524,7 @@ pub fn take_esrap_breakdown() -> EsrapBreakdown {
 pub fn record_visit_program(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     VISIT_PROGRAM.with(|c| c.set(c.get() + d));
@@ -528,7 +534,7 @@ pub fn record_visit_program(d: Duration) {
 pub fn record_script_text(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     SCRIPT_TEXT.with(|c| c.set(c.get() + d));
@@ -539,7 +545,7 @@ pub fn record_script_text(d: Duration) {
 pub fn record_parent_site(is_pub: bool) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     if is_pub {
@@ -586,7 +592,7 @@ impl Drop for ParentScope {
     fn drop(&mut self) {
         // Arm A of the instrumentation-cost A/B: the whole body folds away, so
         // the measured difference is the timers plus their recorders, not a subset.
-        if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+        if !timers_enabled() {
             return;
         }
         ST_PARENT_OPEN.with(|c| c.set(c.get().saturating_sub(1)));
@@ -597,7 +603,7 @@ impl Drop for EntryGuard {
     fn drop(&mut self) {
         // Arm A of the instrumentation-cost A/B: the whole body folds away, so
         // the measured difference is the timers plus their recorders, not a subset.
-        if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+        if !timers_enabled() {
             return;
         }
         ST_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
@@ -610,7 +616,7 @@ impl Drop for EntryGuard {
 pub fn record_st_entry() {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ST_ENTRIES.with(|c| c.set(c.get() + 1));
@@ -620,7 +626,7 @@ pub fn record_st_entry() {
 pub fn record_template_fragment(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     TEMPLATE_FRAGMENT.with(|c| c.set(c.get() + d));
@@ -630,7 +636,7 @@ pub fn record_template_fragment(d: Duration) {
 pub fn record_assembly_after_fragment(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ASSEMBLY_AFTER_FRAGMENT.with(|c| c.set(c.get() + d));
@@ -640,7 +646,7 @@ pub fn record_assembly_after_fragment(d: Duration) {
 pub fn record_css_render(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     CSS_RENDER.with(|c| c.set(c.get() + d));
@@ -650,7 +656,7 @@ pub fn record_css_render(d: Duration) {
 pub fn record_codegen(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     CODEGEN.with(|c| c.set(c.get() + d));
@@ -664,7 +670,7 @@ impl Drop for ProcessAccumulatedGuard {
     fn drop(&mut self) {
         // Arm A of the instrumentation-cost A/B: the whole body folds away, so
         // the measured difference is the timers plus their recorders, not a subset.
-        if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+        if !timers_enabled() {
             return;
         }
         ST_PROCESS_ACCUMULATED.with(|c| c.set(c.get() + timer_elapsed(self.0)));
@@ -676,7 +682,7 @@ impl Drop for ProcessAccumulatedGuard {
 pub fn record_st_runes(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ST_RUNES.with(|c| c.set(c.get() + d));
@@ -689,7 +695,7 @@ impl Drop for ReactiveStmtGuard {
     fn drop(&mut self) {
         // Arm A of the instrumentation-cost A/B: the whole body folds away, so
         // the measured difference is the timers plus their recorders, not a subset.
-        if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+        if !timers_enabled() {
             return;
         }
         ST_REACTIVE_STMT.with(|c| c.set(c.get() + timer_elapsed(self.0)));
@@ -701,7 +707,7 @@ impl Drop for ReactiveStmtGuard {
 pub fn record_st_prenormalize(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ST_PRENORMALIZE.with(|c| c.set(c.get() + d));
@@ -712,7 +718,7 @@ pub fn record_st_prenormalize(d: Duration) {
 pub fn record_st_collect_vars(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ST_COLLECT_VARS.with(|c| c.set(c.get() + d));
@@ -722,7 +728,7 @@ pub fn record_st_collect_vars(d: Duration) {
 pub fn record_st_line_loop(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ST_LINE_LOOP.with(|c| c.set(c.get() + d));
@@ -732,7 +738,7 @@ pub fn record_st_line_loop(d: Duration) {
 pub fn record_st_ast_transforms(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ST_AST_TRANSFORMS.with(|c| c.set(c.get() + d));
@@ -742,7 +748,7 @@ pub fn record_st_ast_transforms(d: Duration) {
 pub fn record_st_post_passes(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     ST_POST_PASSES.with(|c| c.set(c.get() + d));
@@ -775,7 +781,7 @@ pub fn take_script_text_breakdown() -> ScriptTextBreakdown {
 pub fn record_pipeline_parse(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     PL_PARSE.with(|c| c.set(c.get() + d));
@@ -785,7 +791,7 @@ pub fn record_pipeline_parse(d: Duration) {
 pub fn record_pipeline_line_offsets(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     PL_LINE_OFFSETS.with(|c| c.set(c.get() + d));
@@ -795,7 +801,7 @@ pub fn record_pipeline_line_offsets(d: Duration) {
 pub fn record_pipeline_ensure_script(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     PL_ENSURE_SCRIPT.with(|c| c.set(c.get() + d));
@@ -805,7 +811,7 @@ pub fn record_pipeline_ensure_script(d: Duration) {
 pub fn record_pipeline_ts_removal(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     PL_TS_REMOVAL.with(|c| c.set(c.get() + d));
@@ -815,7 +821,7 @@ pub fn record_pipeline_ts_removal(d: Duration) {
 pub fn record_pipeline_options_merge(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     PL_OPTIONS_MERGE.with(|c| c.set(c.get() + d));
@@ -825,7 +831,7 @@ pub fn record_pipeline_options_merge(d: Duration) {
 pub fn record_pipeline_analyze(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     PL_ANALYZE.with(|c| c.set(c.get() + d));
@@ -835,7 +841,7 @@ pub fn record_pipeline_analyze(d: Duration) {
 pub fn record_pipeline_transform(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     PL_TRANSFORM.with(|c| c.set(c.get() + d));
@@ -847,7 +853,7 @@ pub fn record_pipeline_transform(d: Duration) {
 pub fn record_pipeline_total(d: Duration) {
     // Arm A of the instrumentation-cost A/B: the whole body folds away, so
     // the measured difference is the timers plus their recorders, not a subset.
-    if cfg!(feature = "measure-no-timers") || !timers_enabled() {
+    if !timers_enabled() {
         return;
     }
     PL_TOTAL.with(|c| c.set(c.get() + d));

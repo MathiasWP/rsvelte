@@ -4,12 +4,15 @@
 //! answer this. Its spread was 8.09% in the best of two attempts and 219% in the
 //! worst, against a target of 0.3%: a whole-compile wall clock also carries
 //! every layout and scheduling difference between two separately compiled
-//! binaries, and `measure-no-timers` changes `TimerStart` from `Instant` to
-//! `()`, so the two arms do not merely differ by the clock reads. This binary
-//! drops that ambition and measures only what a runtime toggle could actually
-//! remove -- the clock reads and the recorder call -- by running the production
+//! binaries, and the timer-free arm changed `TimerStart` from `Instant` to
+//! `()`, so the two arms did not merely differ by the clock reads. This binary
+//! drops that ambition and measures only what the runtime gate actually removes
+//! -- the clock reads and the recorder call -- by running the production
 //! functions themselves, in a loop, in one process. Unlike a two-binary A/B its
 //! resolution is a parameter: raising `ITERS` buys precision.
+//!
+//! It also runs one sweep with the gate shut, which is the state a shipped
+//! compile is in, and checks that no recorder accumulated while it was shut.
 //!
 //! What it therefore does NOT measure: the indirect cost of the instrumentation
 //! existing at all (instruction-cache pressure, inlining decisions elsewhere,
@@ -95,7 +98,11 @@ fn control_batch() -> f64 {
 fn min_median_max(samples: &[f64]) -> (f64, f64, f64) {
     let mut sorted = samples.to_vec();
     sorted.sort_by(f64::total_cmp);
-    (sorted[0], sorted[sorted.len() / 2], sorted[sorted.len() - 1])
+    (
+        sorted[0],
+        sorted[sorted.len() / 2],
+        sorted[sorted.len() - 1],
+    )
 }
 
 /// Minimum, median and maximum of one shape's batches. The spread is printed
@@ -181,7 +188,10 @@ fn main() {
     let iterations = ITERS as f64 * BATCHES as f64;
 
     println!("iterations per shape  {iterations:.0}");
-    println!("control        min {:7.2} ns/iter  (empty loop)", on.control);
+    println!(
+        "control        min {:7.2} ns/iter  (empty loop)",
+        on.control
+    );
     println!();
 
     let simple_net = report("simple cell", on.simple, on.control);
