@@ -46,7 +46,7 @@ quoted key dropped in a destructured `$derived`) and #2034 (`$.to_array` arity
 with a rest element) — were resolved by #2036, which mirrored #2010's client
 destructuring fixes onto the server target.
 
-## Client dev (`known-failures.client-dev.json`, 91 entries)
+## Client dev (`known-failures.client-dev.json`, 49 entries)
 
 The `client-dev` target is the `client` target with `dev: true`. It is a
 separate ratchet because `dev` gates 18 client codegen files plus the CSS
@@ -94,6 +94,15 @@ needs before the statement ASI used to separate, the quote style of the
 written inside a comment or a string, and the comments leading a `$:` statement
 that has a surviving successor.
 
+Pairing each `$$ownership_validator.mutation(...)` with the source position of
+its **own** member path took it to 49. The locator scanned the source with a
+single monotonic cursor per prop, which assumes mutations are emitted in source
+order; legacy `$:` statements are re-grouped in dependency order, so every
+mutation of a prop that is mutated more than once reported its neighbour's
+line/column. 16 of the 42 cleared entries are that fix (`svelthree/*` and
+`svelte-ux/DateRange`, all of which mutate one prop from several `$:`
+statements); the rest were already passing and had not been re-measured.
+
 ### How the counts below are derived
 
 The enrolment-era table attributed each entry by its **first differing line**.
@@ -108,13 +117,13 @@ each side, which separates the two directions and cannot be fooled by order:
 
 | Cluster | under-emits | over-emits | Upstream emitter (`phases/3-transform/client/`) | Issue |
 |---|---:|---:|---|---|
-| `$.assign` / `$.assign_async` | 24 | 2 | `visitors/AssignmentExpression.js` | #2064 |
-| signal read/write (`$.get` / `$.set` / `$.update`) | 7 | 0 | `visitors/shared/utils.js` | #2064 |
-| equality instrumentation | 4 | 0 | `visitors/BinaryExpression.js` | #2064 |
+| `$.assign` / `$.assign_async` | 6 | 2 | `visitors/AssignmentExpression.js` | #2064 |
+| signal read/write (`$.get` / `$.set` / `$.update`) | 3 | 0 | `visitors/shared/utils.js` | #2064 |
 | `$.track_reactivity_loss(...)` | 0 | 3 | `visitors/AwaitExpression.js` | #2064 |
 | ownership mutation validation | 2 | 0 | `transform-client.js`, `visitors/shared/{component,utils}.js` | #2027 |
 | `$.tag()` / `$.tag_proxy()` | 2 | 0 | `visitors/VariableDeclaration.js` | #2064 |
 | `console.*` wrapping | 0 | 2 | `visitors/CallExpression.js` | #2064 |
+| equality instrumentation | 1 | 0 | `visitors/BinaryExpression.js` | #2064 |
 
 The ownership row splits into two halves: entries missing the
 `$.create_ownership_validator($$props)` preamble entirely, and entries that have
@@ -122,11 +131,11 @@ it but under-emit call sites. The preamble half is now empty; both survivors
 emit their `$$ownership_validator.binding(...)` calls and are missing exactly one
 `$$ownership_validator.mutation(...)` each.
 
-46 entries are attributed to a cluster; the remaining **45** show no
-difference in any dev helper: 19 are comment placement, 18 are the CSS
-sourcemap `$$css`/`$css` carries in dev, 4 are dev label / path-element text,
-2 are redundant parentheses and 2 are a `$.trace` label's line:column. All are
-tracked in #2064. The legacy `bind:` `function get()/set()` shape was 47
+21 entries are attributed to a cluster; the remaining **28** show no
+difference in any dev helper: 17 are the CSS sourcemap `$$css`/`$css` carries
+in dev, 5 are comment placement, 2 are an `$inspect` label's text, 2 are
+redundant parentheses around an ownership wrapper and 2 are one-off shapes (an
+escaped-CSS literal, an `$.assign_async` wrap). All are tracked in #2064. The legacy `bind:` `function get()/set()` shape was 47
 entries of that residue and is fixed: `build_each_block_accessor_parts` now
 hands the element `bind:` path the unthunked getter body plus the setter body,
 so `dev` can emit upstream's named accessors (`BindDirective.js:46-54`). The
