@@ -32,6 +32,8 @@ use rsvelte_core::compiler::phases::phase3_transform::{profile, transform_compon
 use rsvelte_core::{CompileOptions, GenerateMode};
 
 fn main() {
+    // The timers are off in the shipped compiler, so a profiler has to ask.
+    profile::set_timers_enabled(true);
     let files = collect_files();
     let total_bytes: usize = files.iter().map(|(_, c)| c.len()).sum();
     println!("Files: {}, Total: {} bytes\n", files.len(), total_bytes);

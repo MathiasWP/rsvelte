@@ -98,8 +98,23 @@ fn min_median_max(samples: &[f64]) -> (f64, f64, f64) {
     (sorted[0], sorted[sorted.len() / 2], sorted[sorted.len() - 1])
 }
 
-fn report(label: &str, samples: &[f64], control: f64) -> f64 {
-    let (min, median, max) = min_median_max(samples);
+/// Minimum, median and maximum of one shape's batches. The spread is printed
+/// because it is the evidence that the minimum was worth taking: a machine busy
+/// enough to push the maximum well above the minimum is a machine whose median
+/// would have carried that contention into the answer.
+type Spread = (f64, f64, f64);
+
+/// One sweep's five series.
+struct Sweep {
+    simple: Spread,
+    pair: Spread,
+    tuple: Spread,
+    plain: Spread,
+    control: f64,
+}
+
+fn report(label: &str, spread: Spread, control: f64) -> f64 {
+    let (min, median, max) = spread;
     let net = min - control;
     println!("{label:14} min {min:7.2}  median {median:7.2}  max {max:7.2}  net {net:7.2} ns/pair");
     net
@@ -109,16 +124,11 @@ fn decision_share(net_ns: f64) -> f64 {
     net_ns * PAIRS_PER_COMPILE / 10.0 / COMPILE_US
 }
 
-fn main() {
-    // Warm every path once, then discard what the warm-up accumulated so the
-    // execution proofs below count only the measured batches.
-    let _ = batch!(profile::record_pipeline_parse, true);
-    let _ = batch!(profile::record_st_prenormalize, true);
-    let _ = batch!(profile::record_esrap_client_split, true);
-    control_batch();
-    profile::take_pipeline_breakdown();
-    profile::take_esrap_breakdown();
-
+/// One sweep of the three shapes plus the empty-loop control, returned as
+/// per-shape minima. Run once with the gate open and once with it shut, so the
+/// residual a shipped compile pays comes from the same code and the same
+/// machine minute as the cost the gate removes.
+fn sweep() -> Sweep {
     let mut simple = Vec::with_capacity(BATCHES);
     let mut pair = Vec::with_capacity(BATCHES);
     let mut tuple = Vec::with_capacity(BATCHES);
@@ -143,19 +153,41 @@ fn main() {
         }
     }
 
+    Sweep {
+        simple: min_median_max(&simple),
+        pair: min_median_max(&pair),
+        tuple: min_median_max(&tuple),
+        plain: min_median_max(&plain),
+        control: min_median_max(&control).0,
+    }
+}
+
+fn main() {
+    profile::set_timers_enabled(true);
+
+    // Warm every path once, then discard what the warm-up accumulated so the
+    // execution proofs below count only the measured batches.
+    let _ = batch!(profile::record_pipeline_parse, true);
+    let _ = batch!(profile::record_st_prenormalize, true);
+    let _ = batch!(profile::record_esrap_client_split, true);
+    control_batch();
+    profile::take_pipeline_breakdown();
+    profile::take_esrap_breakdown();
+
+    let on = sweep();
+
     let pipeline = profile::take_pipeline_breakdown();
     let esrap = profile::take_esrap_breakdown();
     let iterations = ITERS as f64 * BATCHES as f64;
 
-    let (control_min, _, _) = min_median_max(&control);
     println!("iterations per shape  {iterations:.0}");
-    println!("control        min {control_min:7.2} ns/iter  (empty loop)");
+    println!("control        min {:7.2} ns/iter  (empty loop)", on.control);
     println!();
 
-    let simple_net = report("simple cell", &simple, control_min);
-    let pair_net = report("two cells", &pair, control_min);
-    let tuple_net = report("tuple cell", &tuple, control_min);
-    report("simple, no bb", &plain, control_min);
+    let simple_net = report("simple cell", on.simple, on.control);
+    let pair_net = report("two cells", on.pair, on.control);
+    let tuple_net = report("tuple cell", on.tuple, on.control);
+    report("simple, no bb", on.plain, on.control);
 
     // Execution proof. The tuple recorder increments a call count once per
     // iteration, so a mismatch here means the loop did not run the number of
@@ -211,6 +243,41 @@ fn main() {
             "ship unconditionally"
         } else {
             "runtime toggle"
+        }
+    );
+
+    // What a shipped compile still pays: the gate's own load and branch, times
+    // the same 101.8 sites. Measured here rather than reasoned about, because
+    // "a relaxed load is free" is the kind of claim that turns out to be a
+    // factor of two off.
+    profile::set_timers_enabled(false);
+    let off = sweep();
+    let residual = off.tuple.0.max(off.simple.0).max(off.pair.0) - off.control;
+    println!();
+    println!("--- gate closed, the state a shipped compile runs in ---");
+    report("simple cell", off.simple, off.control);
+    report("two cells", off.pair, off.control);
+    report("tuple cell", off.tuple, off.control);
+    println!(
+        "residual      {:6.3} us/compile   {:6.4} % of {COMPILE_US:.0} us",
+        residual * PAIRS_PER_COMPILE / 1000.0,
+        decision_share(residual)
+    );
+
+    // The gate is only worth its complexity if it removes most of the cost.
+    let removed = 1.0 - residual / worst;
+    println!("gate removes  {:.1} % of the direct cost", removed * 100.0);
+
+    // A recorder that still accumulated with the gate shut would make every
+    // profile silently wrong in the other direction, so check rather than
+    // assume the early returns are reached.
+    let leaked = profile::take_esrap_breakdown().client_split_calls;
+    println!(
+        "leaked recorder calls  {leaked}  {}",
+        if leaked == 0 {
+            "none -- the gate reaches every recorder"
+        } else {
+            "LEAK -- a recorder ran with the gate shut"
         }
     );
 }

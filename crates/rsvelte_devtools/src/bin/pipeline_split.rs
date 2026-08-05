@@ -72,6 +72,11 @@ fn digest(acc: &mut u64, bytes: &[u8]) {
 }
 
 fn main() {
+    // The timers are off in the shipped compiler, so a profiler has to ask.
+    // The digest mode below deliberately leaves them on: it compares compiler
+    // output, and turning them off there would compare a different build state
+    // than the one the split was measured in.
+    profile::set_timers_enabled(true);
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let hash_only = args.iter().any(|a| a == "--hash");
     args.retain(|a| a != "--hash");

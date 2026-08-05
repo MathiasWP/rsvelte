@@ -99,6 +99,8 @@ struct Split {
 }
 
 fn main() {
+    // The timers are off in the shipped compiler, so a profiler has to ask.
+    profile::set_timers_enabled(true);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let reps = flag_num(&args, "--reps").unwrap_or(9);
     let only_mode = flag_value(&args, "--mode");
