@@ -66,6 +66,26 @@ const COMPILE_US: f64 = 2292.0;
 /// at or above it the recorders go behind a runtime toggle.
 const DECISION_PCT: f64 = 0.15;
 
+/// Band the two independent estimators must agree within. A pair is two clock
+/// reads plus a recorder, so their ratio sits a little above two.
+///
+/// This catches contamination that hits the two estimators unequally, and only
+/// that. A machine slow enough to stretch the clock read itself stretches both,
+/// and the ratio is scale-free, so it stays in band while both figures are
+/// wrong -- observed, not hypothesised. [`MAX_MEDIAN_OVER_MIN`] is the check
+/// that moves in that case.
+const RATIO_LOW: f64 = 1.8;
+const RATIO_HIGH: f64 = 3.0;
+
+/// How far a shape's median may sit above its minimum.
+///
+/// On an uncontended machine a fixed instruction sequence repeats to within a
+/// few percent, so a median well above the minimum means most batches were
+/// disturbed and the minimum is the only clean sample left -- if it is clean at
+/// all. Unlike the ratio this is an absolute statement about one series, so a
+/// uniform slowdown cannot hide inside it.
+const MAX_MEDIAN_OVER_MIN: f64 = 1.2;
+
 /// One batch of the production timer trio.
 ///
 /// `$bb` selects whether the `Duration` is forced through `black_box` on its way
@@ -222,11 +242,35 @@ fn main() {
     // any figure from outside this run. `parse` collects both simple-cell
     // shapes, black-boxed and not, hence the factor of two.
     let inner = pipeline.parse.as_nanos() as f64 / (iterations * 2.0);
+    let ratio = simple_net / inner;
+    // The band is wide because the recorder's share of the pair is not fixed
+    // across shapes, and it is calibrated on a handful of runs, so treat a value
+    // just outside it as a reason to look rather than a verdict.
+    let steady = [on.simple, on.pair, on.tuple]
+        .iter()
+        .all(|&(min, median, _)| median / min <= MAX_MEDIAN_OVER_MIN);
+    let trustworthy = (RATIO_LOW..=RATIO_HIGH).contains(&ratio) && steady;
+    let worst_spread = [on.simple, on.pair, on.tuple]
+        .iter()
+        .map(|&(min, median, _)| median / min)
+        .fold(0.0_f64, f64::max);
+    println!(
+        "median / min          {worst_spread:7.2}  limit {MAX_MEDIAN_OVER_MIN}  {}",
+        if steady {
+            "ok"
+        } else {
+            "DISTURBED -- most batches were contended, not just a few"
+        }
+    );
     if inner > 0.0 {
         println!("inner estimator       {inner:7.2} ns  one clock read");
         println!(
-            "simple / inner        {:7.2}  expected near 2",
-            simple_net / inner
+            "simple / inner        {ratio:7.2}  expected {RATIO_LOW} to {RATIO_HIGH}  {}",
+            if trustworthy {
+                "ok"
+            } else {
+                "OUT OF BAND -- the open-gate figures below are contaminated"
+            }
         );
     } else {
         println!("inner estimator       zero -- the accumulator never ran, net figures unusable");
@@ -246,15 +290,19 @@ fn main() {
         );
     }
     println!();
-    println!(
-        "decision uses the most expensive shape: {:.4} %  cut {DECISION_PCT} %  -> {}",
-        decision_share(worst),
-        if decision_share(worst) < DECISION_PCT {
-            "ship unconditionally"
-        } else {
-            "runtime toggle"
-        }
-    );
+    if trustworthy {
+        println!(
+            "decision uses the most expensive shape: {:.4} %  cut {DECISION_PCT} %  -> {}",
+            decision_share(worst),
+            if decision_share(worst) < DECISION_PCT {
+                "ship unconditionally"
+            } else {
+                "runtime toggle"
+            }
+        );
+    } else {
+        println!("no decision: the estimators disagree, so this run cannot price the open gate");
+    }
 
     // What a shipped compile still pays: the gate's own load and branch, times
     // the same 101.8 sites. Measured here rather than reasoned about, because
@@ -268,10 +316,23 @@ fn main() {
     report("simple cell", off.simple, off.control);
     report("two cells", off.pair, off.control);
     report("tuple cell", off.tuple, off.control);
+    // The closed-gate figure is the one that describes shipped builds, so it
+    // gets the same steadiness check rather than inheriting the open sweep's
+    // verdict. In practice it passes on machines where the open sweep does not:
+    // a load and a branch are too short to be stretched by contention.
+    let closed_spread = [off.simple, off.pair, off.tuple]
+        .iter()
+        .map(|&(min, median, _)| median / min)
+        .fold(0.0_f64, f64::max);
     println!(
-        "residual      {:6.3} us/compile   {:6.4} % of {COMPILE_US:.0} us",
+        "residual      {:6.3} us/compile   {:6.4} % of {COMPILE_US:.0} us   median/min {closed_spread:.2} {}",
         residual * PAIRS_PER_COMPILE / 1000.0,
-        decision_share(residual)
+        decision_share(residual),
+        if closed_spread <= MAX_MEDIAN_OVER_MIN {
+            "ok"
+        } else {
+            "DISTURBED"
+        }
     );
 
     // The gate is only worth its complexity if it removes most of the cost.
