@@ -59,10 +59,25 @@ fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
 }
 
+/// Order-dependent digest of every byte the compiler produced.
+///
+/// The instrumentation-cost A/B needs proof that the no-timer arm removed only
+/// measurement work. Comparing the two arms' timings cannot show that; comparing
+/// what they compiled can. Kept out of the timed mode so it never enters the
+/// wall clock the A/B divides.
+fn digest(acc: &mut u64, bytes: &[u8]) {
+    for b in bytes {
+        *acc = (*acc ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
+    }
+}
+
 fn main() {
-    let roots: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let hash_only = args.iter().any(|a| a == "--hash");
+    args.retain(|a| a != "--hash");
+    let roots: Vec<PathBuf> = args.into_iter().map(PathBuf::from).collect();
     if roots.is_empty() {
-        eprintln!("usage: pipeline_split <dir>...");
+        eprintln!("usage: pipeline_split [--hash] <dir>...");
         std::process::exit(1);
     }
 
@@ -78,6 +93,34 @@ fn main() {
     if sources.is_empty() {
         eprintln!("no .svelte files under the given roots");
         std::process::exit(1);
+    }
+
+    if hash_only {
+        let mut acc = 0xcbf2_9ce4_8422_2325u64;
+        for dev in [false, true] {
+            for source in &sources {
+                match compile_with_external_sourcemap_content(
+                    source,
+                    CompileOptions {
+                        generate: GenerateMode::Client,
+                        dev,
+                        ..Default::default()
+                    },
+                ) {
+                    Ok(result) => {
+                        digest(&mut acc, result.js.code.as_bytes());
+                        if let Some(css) = result.css.as_ref() {
+                            digest(&mut acc, css.code.as_bytes());
+                        }
+                    }
+                    // Failures have to contribute too: an arm that stopped
+                    // compiling would otherwise agree with one that did not.
+                    Err(_) => digest(&mut acc, b"<err>"),
+                }
+            }
+        }
+        println!("{} files, digest {acc:016x}", sources.len());
+        return;
     }
 
     // Warm up on the same entry point that is measured, so the timed pass is
