@@ -132,4 +132,21 @@ fn main() {
         pct(b.unattributed())
     );
     println!("{:<16}{total:>12.1}{:>9.1}%", "total", 100.0);
+
+    // The divisor for the instrumentation's own cost. `timer_start` is the same
+    // work at every site; the recorders are not, since they take between zero
+    // and two `Duration`s, so dividing by recorder calls would mix sites that
+    // read the clock twice with sites that never read it at all.
+    #[cfg(feature = "measure-timer-calls")]
+    {
+        let pairs = profile::take_timer_starts();
+        println!(
+            "\ntimer_start calls {pairs} ({:.1} per compile)",
+            if b.compiles == 0 {
+                f64::NAN
+            } else {
+                pairs as f64 / b.compiles as f64
+            }
+        );
+    }
 }

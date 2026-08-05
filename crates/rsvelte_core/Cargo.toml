@@ -31,6 +31,10 @@ trace-fastpath = []
 # reuses the retained instance-script program instead of parsing it again.
 # Off by default.
 measure-ast-state = []
+# Repository-local instrumentation: count the `Instant` pairs the always-on
+# phase timers cost per compile. The unit is `timer_start`, which is identical
+# at every site, unlike the recorders. Off by default.
+measure-timer-calls = []
 # Repository-local instrumentation: replay the pre-refactor `await` scanner so
 # the `String` allocations it performed can be counted. Off by default.
 measure-await = []

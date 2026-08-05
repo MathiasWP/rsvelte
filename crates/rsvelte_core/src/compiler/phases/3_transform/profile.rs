@@ -30,6 +30,8 @@ pub type TimerStart = ();
 #[cfg(not(target_arch = "wasm32"))]
 #[inline]
 pub fn timer_start() -> TimerStart {
+    #[cfg(feature = "measure-timer-calls")]
+    TIMER_STARTS.with(|c| c.set(c.get() + 1));
     std::time::Instant::now()
 }
 
@@ -47,6 +49,24 @@ pub fn timer_elapsed(start: TimerStart) -> Duration {
 #[inline]
 pub fn timer_elapsed(_start: TimerStart) -> Duration {
     Duration::ZERO
+}
+
+/// How many `Instant` pairs one compile pays for.
+///
+/// The unit is deliberately `timer_start`, not `record_*`: the recorders take
+/// between zero and two `Duration`s, so counting them would mix sites that read
+/// the clock twice with sites that never read it. Every `timer_start` is one
+/// `now()` plus the `elapsed()` that consumes it, so dividing the measured
+/// instrumentation cost by this count gives a per-pair figure without assuming
+/// the sites are alike.
+#[cfg(feature = "measure-timer-calls")]
+thread_local! {
+    static TIMER_STARTS: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(feature = "measure-timer-calls")]
+pub fn take_timer_starts() -> u64 {
+    TIMER_STARTS.with(|c| c.replace(0))
 }
 
 /// Per-call-site cost of the `rsvelte_esrap` printer inside one compile run.
