@@ -35,6 +35,9 @@ measure-ast-state = []
 # phase timers cost per compile. The unit is `timer_start`, which is identical
 # at every site, unlike the recorders. Off by default.
 measure-timer-calls = []
+# Arm A of the instrumentation-cost A/B: compiles the phase timers and their
+# recorders away, so the difference against a normal build is their total cost.
+measure-no-timers = []
 # Repository-local instrumentation: replay the pre-refactor `await` scanner so
 # the `String` allocations it performed can be counted. Off by default.
 measure-await = []
