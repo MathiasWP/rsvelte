@@ -19,6 +19,32 @@
 //! buckets, measured independently, so a phase nobody instrumented lands there
 //! rather than inflating the buckets that exist.
 //!
+//! # How the buckets line up with the older split
+//!
+//! A share that moved between the two tables is not a finding on its own, so
+//! the correspondence is written down rather than inferred:
+//!
+//! ```text
+//! this split      older split      why the number differs
+//! parse           parse            same work; this one includes the deferred
+//!                                  script split, which the older one skipped
+//! line_offsets    (absent)         the older run passed `false` and never
+//!                                  built them, so its denominator was smaller
+//! resolve_lazy    (absent)         landed in the older run's residual
+//! ensure_script   (absent)         the older run had no retained scripts, so
+//!                                  this work happened later and elsewhere
+//! ts_removal      (absent)         the older run never removed TypeScript
+//! options_merge   (absent)         the older run never merged the options
+//! analyze         analyze          same phase; the input differs because the
+//!                                  three steps above changed the AST it sees
+//! transform       phase 3 total    same phase, and its sub-split is unchanged
+//! finalize        (absent)         landed in the older run's residual
+//! ```
+//!
+//! Four of the older split's four divergences were absences, so its buckets
+//! were shares of a smaller denominator. Reading a bucket as "it shrank"
+//! against that table compares two different totals.
+//!
 //! # Entry point
 //!
 //! Drives `compile_with_external_sourcemap_content`, which is what the napi
